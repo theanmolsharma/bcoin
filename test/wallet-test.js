@@ -824,8 +824,7 @@ describe('Wallet', function() {
 
     // Create new transaction
     const m2 = new MTX();
-    // m2.addOutput(await bob.receiveAddress(), 9860);
-    m2.addOutput(await bob.receiveAddress(), 5460);
+    m2.addOutput(await bob.receiveAddress(), 9860);
 
     await alice.fund(m2, {
       useSelectByValue: true
@@ -837,6 +836,36 @@ describe('Wallet', function() {
 
     assert(t2.verify(v2));
     assert(t2.getOutputValue() >= 9860);
+  });
+
+  it('should fill tx with inputs using Branch and Bound', async () => {
+    const alice = await wdb.create();
+    const bob = await wdb.create();
+
+    // Coinbase
+    const t1 = new MTX();
+    t1.addInput(dummyInput());
+    t1.addOutput(await alice.receiveAddress(), 5460);
+    t1.addOutput(await alice.receiveAddress(), 5460);
+    t1.addOutput(await alice.receiveAddress(), 5460);
+    t1.addOutput(await alice.receiveAddress(), 5460);
+
+    await wdb.addTX(t1.toTX());
+
+    // Create new transaction
+    const m2 = new MTX();
+    m2.addOutput(await bob.receiveAddress(), 10015);
+
+    await alice.fund(m2, {
+      useSelectBnB: true
+    });
+
+    await alice.sign(m2);
+
+    const [t2, v2] = m2.commit();
+
+    assert(t2.verify(v2));
+    assert(t2.getOutputValue() == 10015);
   });
 
   it('should fill tx with inputs with accurate fee', async () => {
