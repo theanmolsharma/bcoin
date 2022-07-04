@@ -880,6 +880,111 @@ describe('Wallet', function() {
     assert.strictEqual(balance.unconfirmed, 5460);
   });
 
+  it('should fill tx with inputs using Branch and Bound', async () => {
+    const alice = await wdb.create();
+
+    // Coinbase
+    const t1 = new MTX();
+    t1.addInput(dummyInput());
+    t1.addOutput(await alice.receiveAddress(), 100000); // 99655
+    t1.addOutput(await alice.receiveAddress(), 50000); // 49655
+    t1.addOutput(await alice.receiveAddress(), 20000); // 19655
+    t1.addOutput(await alice.receiveAddress(), 10000); // 9655
+    t1.addOutput(await alice.receiveAddress(), 5000); // 4655
+    t1.addOutput(await alice.receiveAddress(), 1000); // 655
+
+    await wdb.addTX(t1.toTX());
+
+    // fee = 215
+    const outputs = [99440, 100095, 19440, 114405, 179060, 178405, 4440, 33750, 84060, 14095, 440];
+    for (const output of outputs) {
+      // Create new transaction
+      const m2 = new MTX();
+      m2.addOutput(await alice.receiveAddress(), output);
+
+      await alice.fund(m2);
+
+      await alice.sign(m2);
+
+      const [tx, view] = m2.commit();
+
+      assert(tx.verify(view));
+      assert.strictEqual(tx.getOutputValue(), output);
+      assert.strictEqual(tx.getInputValue(view) - output, tx.getFee(view));
+    }
+  });
+
+  it('should fill tx with inputs using Lowest Larger and SRD', async () => {
+    const alice = await wdb.create();
+
+    // Coinbase
+    const t1 = new MTX();
+    t1.addInput(dummyInput());
+    t1.addOutput(await alice.receiveAddress(), 100000); // 99655
+    t1.addOutput(await alice.receiveAddress(), 50000); // 49655
+    t1.addOutput(await alice.receiveAddress(), 20000); // 19655
+    t1.addOutput(await alice.receiveAddress(), 10000); // 9655
+    t1.addOutput(await alice.receiveAddress(), 5000); // 4655
+    t1.addOutput(await alice.receiveAddress(), 1000); // 655
+
+    await wdb.addTX(t1.toTX());
+
+    // fee = 215
+    const balance = await alice.getBalance();
+    for (let i = 1; i < 99; i++) {
+      // Create new transaction
+      const m2 = new MTX();
+      const output = Math.floor(i * balance.unconfirmed / 100);
+      m2.addOutput(await alice.receiveAddress(), output);
+
+      await alice.fund(m2);
+
+      await alice.sign(m2);
+
+      const [tx, view] = m2.commit();
+
+      assert(tx.verify(view));
+      assert(tx.getOutputValue() >= output);
+      assert(tx.getInputValue(view) >= output);
+    }
+  });
+
+  it('should produce a useful change output instead of dropping excess to fee', async () => {
+    const alice = await wdb.create();
+
+    // Coinbase
+    const t1 = new MTX();
+    t1.addInput(dummyInput());
+    t1.addOutput(await alice.receiveAddress(), 100000); // 99655
+    t1.addOutput(await alice.receiveAddress(), 50000); // 49655
+    t1.addOutput(await alice.receiveAddress(), 20000); // 19655
+    t1.addOutput(await alice.receiveAddress(), 10000); // 9655
+    t1.addOutput(await alice.receiveAddress(), 5000); // 4655
+    t1.addOutput(await alice.receiveAddress(), 1000); // 655
+
+    await wdb.addTX(t1.toTX());
+
+    // fee = 215
+    const outputs = [98000, 97000, 96000, 95000, 94000, 93000, 92000, 91000, 90000];
+    for (const output of outputs) {
+      // Create new transaction
+      const m2 = new MTX();
+      m2.addOutput(await alice.receiveAddress(), output);
+
+      await alice.fund(m2);
+
+      await alice.sign(m2);
+
+      const [tx, view] = m2.commit();
+
+      const change = tx.getOutputValue() - output;
+      assert(tx.verify(view));
+      assert(change >= 34500);
+      assert(tx.getOutputValue() >= output);
+      assert(tx.getInputValue(view) >= output);
+    }
+  });
+
   it('should sign multiple inputs using different keys', async () => {
     const alice = await wdb.create();
     const bob = await wdb.create();
