@@ -74,11 +74,10 @@ async function migrateFilter(db) {
   console.log('Migrating filters..');
   let parent  = db.batch();
 
-  const iter = db.iterator({
+  const range = await db.range({
     gte: layout.h.min(),
     lte: layout.h.max(),
-    keys: true,
-    values: true
+    parse: (k, v) => [k, v]
   });
 
   const migratedDB = bdb.create({
@@ -92,30 +91,35 @@ async function migrateFilter(db) {
 
   let parentMigratedDB = migratedDB.batch();
 
-  let migratedFilters = 0;
-
-  await iter.each(async (height, hash) => {
-    const rawFilter = await blockStore.readFilter(hash, filters.BASIC);
-    const filter = Filter.fromRaw(rawFilter);
-    const filterHash = hash256.digest(filter.filter);
-
-    parentMigratedDB.put(height, hash);
-    parent.del(height);
-
-    parentMigratedDB.put(layout.f.encode(hash), filterHash);
-    parent.del(layout.f.encode(hash));
-
-    migratedFilters += 1;
-
-    if (migratedFilters % 10000 === 0) {
-      console.log('migrated %d filters.', migratedFilters);
-      await parentMigratedDB.write();
-      await parent.write();
-
-      parentMigratedDB = migratedDB.batch();
-      parent = db.batch();
+  for(let i = 0, n = range.length; i < n;) {
+    const promises = [];
+    for (let j = 0; j + i < n && j < 10000; j++) {
+      promises.push(blockStore.readFilter(range[i + j][1], filters.BASIC));
     }
-  });
+
+    const rawFilters = await Promise.all(promises);
+
+    for (let j = 0, m = rawFilters.length; j < m; j++) {
+      const [height, hash] = range[i + j];
+      const rawFilter = rawFilters[j];
+      const filter = Filter.fromRaw(rawFilter);
+      const filterHash = hash256.digest(filter.filter);
+
+      parentMigratedDB.put(height, hash);
+      parent.del(height);
+
+      parentMigratedDB.put(layout.f.encode(hash), filterHash);
+      parent.del(layout.f.encode(hash));
+    }
+
+    i += rawFilters.length;
+    console.log('migrated %d filters.', i);
+    await parentMigratedDB.write();
+    await parent.write();
+
+    parentMigratedDB = migratedDB.batch();
+    parent = db.batch();
+  }
 
   let raw = await db.get(layout.R.encode());
   parentMigratedDB.put(layout.R.encode(), raw);
@@ -133,8 +137,6 @@ async function migrateFilter(db) {
 
   await parentMigratedDB.write();
   await parent.write();
-
-  console.log('%d filters migrated.', migratedFilters);
 
   await db.close();
   await db.destroy();
